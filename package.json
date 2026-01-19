@@ -76,6 +76,18 @@
       "node_modules/**/*",
       "package.json"
     ],
+    "extraResources": [
+      {
+        "from": "models",
+        "to": "models",
+        "filter": ["**/*.gguf"]
+      },
+      {
+        "from": "bin",
+        "to": "bin",
+        "filter": ["llama-server*"]
+      }
+    ],
     "mac": {
       "category": "public.app-category.healthcare-fitness",
       "target": [
@@ -97,6 +109,10 @@
           ]
         }
       ]
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "category": "Utility"
     },
     "nsis": {
       "oneClick": false,
