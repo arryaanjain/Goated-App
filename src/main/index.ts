@@ -4,6 +4,7 @@ import { config } from 'dotenv';
 import { getWhisperService, WhisperModel } from './services/WhisperService';
 import { getMCPService } from './services/MCPService';
 import { getAIService } from './services/AIService';
+import { llamaService } from './services/LlamaService';
 
 // Load environment variables from .env file
 config();
@@ -85,8 +86,11 @@ app.whenReady().then(async () => {
     const configData = await fs.readFile(configPath, 'utf-8');
     const config = JSON.parse(configData);
     
-    // Initialize with saved API keys
-    if (config.openaiApiKey) {
+    // Initialize with saved API keys or offline model
+    if (config.provider === 'offline') {
+      await aiService.initializeOffline(config.offlineModelPath);
+      console.log('[GoatedApp] AIService initialized with offline model from saved config');
+    } else if (config.openaiApiKey) {
       aiService.initializeOpenAI(config.openaiApiKey, config.selectedModel || 'gpt-4o-mini');
       console.log('[GoatedApp] AIService initialized with OpenAI from saved config');
     } else if (config.geminiApiKey) {
@@ -96,7 +100,16 @@ app.whenReady().then(async () => {
       console.warn('[GoatedApp] No API keys found in config');
     }
   } catch (error) {
-    console.log('[GoatedApp] No saved API config found - user needs to configure in Settings');
+    console.log('[GoatedApp] No saved API config found - will try to auto-start offline model');
+    
+    // Try to auto-start offline model as default (auto-detects bundled model)
+    const result = await aiService.initializeOffline();
+    if (result.success) {
+      console.log('[GoatedApp] Auto-started bundled offline model');
+    } else {
+      console.log('[GoatedApp] Offline model not available:', result.error);
+      console.log('[GoatedApp] User can configure alternative provider in Settings');
+    }
   }
 
   // Fallback: Try environment variables
@@ -134,8 +147,10 @@ app.on('window-all-closed', () => {
 
 // Handle app quit
 app.on('will-quit', () => {
-  // Clean up resources here (e.g., stop Python backend)
+  // Clean up resources here
   console.log('[GoatedApp] Application is quitting...');
+  // Stop llama server if running
+  llamaService.cleanup();
 });
 
 // ============================================
@@ -428,7 +443,7 @@ ipcMain.handle('model:getDownloadProgress', async (_event, _modelId: string) => 
 });
 
 // API Key management
-ipcMain.handle('api:setKeys', async (_event, config: { openaiApiKey?: string; geminiApiKey?: string; selectedModel?: string; provider?: 'openai' | 'gemini' }) => {
+ipcMain.handle('api:setKeys', async (_event, config: { openaiApiKey?: string; geminiApiKey?: string; selectedModel?: string; provider?: 'openai' | 'gemini' | 'offline'; offlineModelPath?: string }) => {
   try {
     // Save config to file
     const userDataPath = app.getPath('userData');
@@ -439,7 +454,13 @@ ipcMain.handle('api:setKeys', async (_event, config: { openaiApiKey?: string; ge
     console.log('[API] Config saved to:', configPath);
     
     // Initialize the appropriate service
-    if (config.provider === 'openai' && config.openaiApiKey) {
+    if (config.provider === 'offline' && config.offlineModelPath) {
+      const result = await aiService.initializeOffline(config.offlineModelPath);
+      if (!result.success) {
+        return { success: false, error: result.error };
+      }
+      console.log('[API] Offline model initialized');
+    } else if (config.provider === 'openai' && config.openaiApiKey) {
       aiService.initializeOpenAI(config.openaiApiKey, config.selectedModel || 'gpt-4o-mini');
       console.log('[API] OpenAI API key updated');
     } else if (config.provider === 'gemini' && config.geminiApiKey) {
@@ -470,6 +491,44 @@ ipcMain.handle('api:getStatus', () => {
     initialized: status.initialized,
     provider: status.provider,
     currentModel: status.model,
+  };
+});
+
+// Offline model management
+ipcMain.handle('offline:startServer', async (_event, modelPath: string) => {
+  try {
+    console.log('[Offline] Starting server with model:', modelPath);
+    const result = await aiService.initializeOffline(modelPath);
+    return result;
+  } catch (error) {
+    console.error('[Offline] Failed to start server:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+});
+
+ipcMain.handle('offline:stopServer', () => {
+  try {
+    console.log('[Offline] Stopping server');
+    const result = llamaService.stopServer();
+    return result;
+  } catch (error) {
+    console.error('[Offline] Failed to stop server:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+});
+
+ipcMain.handle('offline:getStatus', () => {
+  const status = llamaService.getStatus();
+  return {
+    running: status.running,
+    ready: status.ready,
+    modelPath: status.modelPath,
   };
 });
 

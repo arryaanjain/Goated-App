@@ -11,6 +11,7 @@ import { generateText, streamText, stepCountIs } from 'ai';
 import { tool } from '@ai-sdk/provider-utils';
 import { z } from 'zod';
 import { getMCPService, MCPTool } from './MCPService';
+import { llamaService } from './LlamaService';
 
 // Types
 export interface ChatMessage {
@@ -41,7 +42,7 @@ export interface StreamCallbacks {
   onError: (error: Error) => void;
 }
 
-export type AIProvider = 'openai' | 'gemini';
+export type AIProvider = 'openai' | 'gemini' | 'offline';
 
 /**
  * AIService class for managing AI chat with tool execution
@@ -50,8 +51,8 @@ class AIService {
   private static instance: AIService;
   private openai: ReturnType<typeof createOpenAI> | null = null;
   private google: ReturnType<typeof createGoogleGenerativeAI> | null = null;
-  private currentProvider: AIProvider = 'openai';
-  private currentModel: string = 'gpt-4o-mini';
+  private currentProvider: AIProvider = 'offline';
+  private currentModel: string = 'llama3.2-3b-q4';
   private conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }> = [];
 
   private constructor() {}
@@ -84,6 +85,25 @@ class AIService {
   }
 
   /**
+   * Initialize offline model with llama.cpp
+   */
+  async initializeOffline(modelPath?: string): Promise<{ success: boolean; error?: string }> {
+    console.log('[AIService] Initializing offline model:', modelPath || 'auto-detect');
+    
+    const result = await llamaService.startServer(modelPath);
+    
+    if (result.success) {
+      this.currentProvider = 'offline';
+      this.currentModel = 'llama3.2-3b-q4';
+      console.log('[AIService] Offline model initialized successfully');
+    } else {
+      console.error('[AIService] Failed to initialize offline model:', result.error);
+    }
+    
+    return result;
+  }
+
+  /**
    * Set the active model
    */
   setModel(model: string): void {
@@ -106,6 +126,10 @@ class AIService {
    * Check if the service is initialized
    */
   isInitialized(): boolean {
+    if (this.currentProvider === 'offline') {
+      const status = llamaService.getStatus();
+      return status.running && status.ready;
+    }
     return this.openai !== null || this.google !== null;
   }
 
@@ -223,11 +247,109 @@ class AIService {
   }
 
   /**
+   * Chat with offline model (tool support disabled for stable conversational responses)
+   */
+  private async chatOffline(userMessage: string): Promise<ChatResult> {
+    // Add user message to history
+    this.conversationHistory.push({
+      role: 'user',
+      content: userMessage,
+    });
+
+    try {
+      // Prepare messages
+      const messages: Array<{ role: string; content: string }> = this.conversationHistory.map(msg => ({
+        role: msg.role,
+        content: msg.content,
+      }));
+
+      console.log(`[AIService] Offline chat - conversational mode (no tools)`);
+
+      // Get response from local llama server WITHOUT tools for stable conversational responses
+      const result = await llamaService.chat(messages);
+
+      // No tool calls - regular text response
+      const response = result.content || '';
+
+      // Add assistant response to history
+      if (response) {
+        this.conversationHistory.push({
+          role: 'assistant',
+          content: response,
+        });
+      }
+
+      console.log(`[AIService] Offline response: "${response.substring(0, 100)}..."`);
+
+      return {
+        response,
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('[AIService] Offline chat error:', errorMessage);
+      throw error;
+    }
+  }
+
+  /**
+   * Stream chat with offline model (simulates streaming by chunking the response)
+   */
+  private async chatStreamOffline(userMessage: string, callbacks: StreamCallbacks): Promise<void> {
+    // Add user message to history
+    this.conversationHistory.push({
+      role: 'user',
+      content: userMessage,
+    });
+
+    try {
+      // Prepare messages for llama server
+      const messages = this.conversationHistory.map(msg => ({
+        role: msg.role,
+        content: msg.content,
+      }));
+
+      // Get response from local llama server (without tools for streaming to keep it simple)
+      const result = await llamaService.chat(messages);
+      const responseText = result.content || '';
+
+      // Simulate streaming by sending chunks
+      const chunkSize = 5; // characters per chunk
+      for (let i = 0; i < responseText.length; i += chunkSize) {
+        const chunk = responseText.slice(i, i + chunkSize);
+        callbacks.onTextChunk(chunk);
+        // Small delay to simulate streaming
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+
+      // Add assistant response to history
+      if (responseText) {
+        this.conversationHistory.push({
+          role: 'assistant',
+          content: responseText,
+        });
+      }
+
+      console.log(`[AIService] Offline stream complete: "${responseText.substring(0, 100)}..."`);
+      callbacks.onComplete(responseText);
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('[AIService] Offline stream error:', errorMessage);
+      callbacks.onError(error instanceof Error ? error : new Error(errorMessage));
+    }
+  }
+
+  /**
    * Send a chat message and get a response with tool execution
    */
   async chat(userMessage: string): Promise<ChatResult> {
     if (!this.isInitialized()) {
       throw new Error('AI Service not initialized. Please configure API keys in Settings.');
+    }
+
+    // For offline models, use simple chat without tool execution for now
+    if (this.currentProvider === 'offline') {
+      return this.chatOffline(userMessage);
     }
 
     const mcpService = getMCPService();
@@ -315,6 +437,11 @@ class AIService {
     if (!this.isInitialized()) {
       callbacks.onError(new Error('AI Service not initialized. Please configure API keys in Settings.'));
       return;
+    }
+
+    // For offline models, use non-streaming chat and simulate streaming
+    if (this.currentProvider === 'offline') {
+      return this.chatStreamOffline(userMessage, callbacks);
     }
 
     const mcpService = getMCPService();
