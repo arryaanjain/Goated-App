@@ -454,12 +454,14 @@ ipcMain.handle('api:setKeys', async (_event, config: { openaiApiKey?: string; ge
     console.log('[API] Config saved to:', configPath);
     
     // Initialize the appropriate service
-    if (config.provider === 'offline' && config.offlineModelPath) {
-      const result = await aiService.initializeOffline(config.offlineModelPath);
+    if (config.provider === 'offline') {
+      // Use selectedModel as the model ID, or offlineModelPath as full path
+      const modelToLoad = config.selectedModel || config.offlineModelPath;
+      const result = await aiService.initializeOffline(modelToLoad);
       if (!result.success) {
         return { success: false, error: result.error };
       }
-      console.log('[API] Offline model initialized');
+      console.log('[API] Offline model initialized:', modelToLoad);
     } else if (config.provider === 'openai' && config.openaiApiKey) {
       aiService.initializeOpenAI(config.openaiApiKey, config.selectedModel || 'gpt-4o-mini');
       console.log('[API] OpenAI API key updated');
@@ -530,6 +532,10 @@ ipcMain.handle('offline:getStatus', () => {
     ready: status.ready,
     modelPath: status.modelPath,
   };
+});
+
+ipcMain.handle('offline:getAvailableModels', () => {
+  return llamaService.getAvailableModels();
 });
 
 console.log('[GoatedApp] Main process initialized');

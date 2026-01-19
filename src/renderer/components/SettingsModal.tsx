@@ -257,7 +257,8 @@ const ModelsTab: React.FC = () => {
       ];
     } else {
       return [
-        { value: 'llama3.2-3b-q4', label: 'Llama 3.2 3B Q4 (Offline)' },
+        { value: 'llama3.2-3b-q4', label: 'Llama 3.2 3B Q4 (Balanced)' },
+        { value: 'functiongemma-270m-q4', label: 'FunctionGemma 270M Q4 (Fast, Function Calling)' },
       ];
     }
   };
@@ -304,7 +305,7 @@ const ModelsTab: React.FC = () => {
             >
               <strong>🔒 Offline Model</strong>
               <div style={{ fontSize: 'var(--font-size-tiny)', color: 'var(--color-text-secondary)' }}>
-                Llama 3.2 3B (Privacy First)
+                Llama 3.2 / FunctionGemma (Privacy First)
               </div>
             </button>
             <button
@@ -358,7 +359,7 @@ const ModelsTab: React.FC = () => {
         {selectedProvider === 'offline' && (
           <div className="settings-tab__form-group">
             <label className="settings-tab__label">
-              Bundled Offline Model
+              Bundled Offline Models
             </label>
             <div style={{
               padding: 'var(--spacing-3)',
@@ -367,10 +368,14 @@ const ModelsTab: React.FC = () => {
               border: '1px solid var(--color-sage-200)',
             }}>
               <div style={{ fontWeight: 600, marginBottom: 'var(--spacing-1)' }}>
-                Llama 3.2 3B (Q4 Quantized)
+                {selectedModel === 'functiongemma-270m-q4' 
+                  ? 'FunctionGemma 270M (Q4 Quantized)'
+                  : 'Llama 3.2 3B (Q4 Quantized)'}
               </div>
               <div style={{ fontSize: 'var(--font-size-small)', color: 'var(--color-text-secondary)' }}>
-                Fully offline, privacy-first AI model
+                {selectedModel === 'functiongemma-270m-q4'
+                  ? 'Optimized for function calling, faster inference'
+                  : 'General purpose model, balanced performance'}
               </div>
             </div>
             {offlineServerStatus && (

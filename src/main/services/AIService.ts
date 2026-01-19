@@ -109,8 +109,21 @@ class AIService {
     
     if (result.success) {
       this.currentProvider = 'offline';
-      this.currentModel = 'llama3.2-3b-q4';
-      console.log('[AIService] Offline model initialized successfully');
+      // Set the current model based on what was passed in
+      if (modelPath) {
+        // If it's a model ID (no path separators)
+        if (!modelPath.includes('/') && !modelPath.includes('\\')) {
+          this.currentModel = modelPath;
+        } else {
+          // Extract model name from path
+          this.currentModel = modelPath.includes('functiongemma') 
+            ? 'functiongemma-270m-q4' 
+            : 'llama3.2-3b-q4';
+        }
+      } else {
+        this.currentModel = 'llama3.2-3b-q4'; // default
+      }
+      console.log('[AIService] Offline model initialized successfully:', this.currentModel);
     } else {
       console.error('[AIService] Failed to initialize offline model:', result.error);
     }
@@ -532,23 +545,18 @@ class AIService {
           }
         }
 
-        // Stream the tool results
-        const responseText = result.content || toolResults.join('\n');
-        const chunkSize = 5;
-        for (let i = 0; i < responseText.length; i += chunkSize) {
-          const chunk = responseText.slice(i, i + chunkSize);
-          callbacks.onTextChunk(chunk);
-          await new Promise(resolve => setTimeout(resolve, 20));
-        }
-
-        // Add to history
+        // Don't stream raw JSON text - cards will display the results
+        // Only send a brief completion message
+        const completionMessage = `Executed ${result.toolCalls.length} tool call(s)`;
+        
+        // Add to history (for context in future messages)
         this.conversationHistory.push({
           role: 'assistant',
-          content: responseText,
+          content: completionMessage,
         });
 
-        console.log(`[AIService] Offline stream complete with tools: "${responseText.substring(0, 100)}..."`);
-        callbacks.onComplete(responseText);
+        console.log(`[AIService] Offline stream complete with ${result.toolCalls.length} tool call(s)`);
+        callbacks.onComplete(completionMessage);
         return;
       }
 

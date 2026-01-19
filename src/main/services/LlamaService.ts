@@ -13,24 +13,63 @@ export class LlamaService {
   private isReady = false;
   private modelPath: string | null = null;
 
+  // Available bundled models
+  private availableModels = [
+    {
+      id: 'llama3.2-3b-q4',
+      name: 'Llama 3.2 3B',
+      filename: 'Llama-3.2-3B-Instruct-Q4_K_L.gguf',
+      description: 'General purpose, balanced performance',
+      contextSize: 8192,
+    },
+    {
+      id: 'functiongemma-270m-q4',
+      name: 'FunctionGemma 270M',
+      filename: 'functiongemma-270m-it-Q4_K_M.gguf',
+      description: 'Optimized for function calling, faster',
+      contextSize: 1024,
+    },
+  ];
+
   constructor() {
     console.log('[LlamaService] Initialized');
   }
 
   /**
-   * Get the bundled model path
+   * Get available models
    */
-  private getBundledModelPath(): string {
+  getAvailableModels() {
+    return this.availableModels;
+  }
+
+  /**
+   * Get the bundled model path by ID or filename
+   */
+  private getBundledModelPath(modelIdOrFilename?: string): string {
     // In production, model is in resources/models
     // In development, model is in project root/models
     const isDev = process.env.NODE_ENV !== 'production';
     
+    // Find model by ID or use default
+    let filename = 'Llama-3.2-3B-Instruct-Q4_K_L.gguf'; // default
+    
+    if (modelIdOrFilename) {
+      // Check if it's a model ID
+      const model = this.availableModels.find(m => m.id === modelIdOrFilename);
+      if (model) {
+        filename = model.filename;
+      } else if (modelIdOrFilename.endsWith('.gguf')) {
+        // It's a filename
+        filename = modelIdOrFilename;
+      }
+    }
+    
     if (isDev) {
       // Development: models in project root
-      return path.join(process.cwd(), 'models', 'Llama-3.2-3B-Instruct-Q4_K_L.gguf');
+      return path.join(process.cwd(), 'models', filename);
     } else {
       // Production: models bundled in resources
-      return path.join(process.resourcesPath, 'models', 'Llama-3.2-3B-Instruct-Q4_K_L.gguf');
+      return path.join(process.resourcesPath, 'models', filename);
     }
   }
 
@@ -51,15 +90,21 @@ export class LlamaService {
 
   /**
    * Start the llama-server process with bundled or custom model
+   * @param modelPath - Full path to model file, or model ID, or undefined for default
    */
   async startServer(modelPath?: string): Promise<{ success: boolean; error?: string }> {
     try {
       // Use provided path or auto-detect bundled model
       const resolvedModelPath = modelPath || this.getBundledModelPath();
       
+      // If it's just an ID, get the full path
+      const finalModelPath = modelPath && !modelPath.includes('/') && !modelPath.includes('\\')
+        ? this.getBundledModelPath(modelPath)
+        : resolvedModelPath;
+      
       // Validate model file exists
-      if (!fs.existsSync(resolvedModelPath)) {
-        throw new Error(`Model file not found: ${resolvedModelPath}`);
+      if (!fs.existsSync(finalModelPath)) {
+        throw new Error(`Model file not found: ${finalModelPath}`);
       }
 
       // Check if server is already running
@@ -68,7 +113,12 @@ export class LlamaService {
         return { success: true };
       }
 
-      this.modelPath = resolvedModelPath;
+      this.modelPath = finalModelPath;
+      
+      // Determine context size based on model
+      const modelFilename = path.basename(finalModelPath);
+      const modelInfo = this.availableModels.find(m => m.filename === modelFilename);
+      const contextSize = modelInfo?.contextSize || 8192;
 
       // Path to llama-server executable
       const llamaServerPath = this.getLlamaServerPath();
@@ -78,13 +128,15 @@ export class LlamaService {
       }
 
       console.log('[LlamaService] Starting llama-server...');
-      console.log('[LlamaService] Model:', resolvedModelPath);
+      console.log('[LlamaService] Model:', finalModelPath);
+      console.log('[LlamaService] Model ID:', modelInfo?.id || 'custom');
+      console.log('[LlamaService] Context Size:', contextSize);
       console.log('[LlamaService] Server:', llamaServerPath);
 
       // Spawn llama-server with required flags
       this.serverProcess = spawn(llamaServerPath, [
-        '--model', resolvedModelPath,
-        '--ctx-size', '8192', // Increased for function calling with multiple tools
+        '--model', finalModelPath,
+        '--ctx-size', contextSize.toString(),
         '--threads', '4',
         '--batch-size', '512', // Increased batch size for better performance
         '--port', this.serverPort.toString(),
