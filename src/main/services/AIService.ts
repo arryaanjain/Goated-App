@@ -68,6 +68,11 @@ class AIService {
    * Initialize with OpenAI API key
    */
   initializeOpenAI(apiKey: string, model: string = 'gpt-4o-mini'): void {
+    // Clean up previous provider
+    if (this.currentProvider !== 'openai') {
+      this.cleanup();
+    }
+    
     this.openai = createOpenAI({ apiKey });
     this.currentProvider = 'openai';
     this.currentModel = model;
@@ -78,6 +83,11 @@ class AIService {
    * Initialize with Google Gemini API key
    */
   initializeGemini(apiKey: string, model: string = 'gemini-2.5-flash-lite'): void {
+    // Clean up previous provider
+    if (this.currentProvider !== 'gemini') {
+      this.cleanup();
+    }
+    
     this.google = createGoogleGenerativeAI({ apiKey });
     this.currentProvider = 'gemini';
     this.currentModel = model;
@@ -89,6 +99,11 @@ class AIService {
    */
   async initializeOffline(modelPath?: string): Promise<{ success: boolean; error?: string }> {
     console.log('[AIService] Initializing offline model:', modelPath || 'auto-detect');
+    
+    // Clean up previous provider (stop online services)
+    if (this.currentProvider !== 'offline') {
+      this.cleanup();
+    }
     
     const result = await llamaService.startServer(modelPath);
     
@@ -120,6 +135,23 @@ class AIService {
       model: this.currentModel,
       initialized: this.isInitialized(),
     };
+  }
+
+  /**
+   * Clean up current provider (stop servers, clear instances)
+   */
+  cleanup(): void {
+    console.log(`[AIService] Cleaning up current provider: ${this.currentProvider}`);
+    
+    // Clear API instances
+    this.openai = null;
+    this.google = null;
+    
+    // If switching away from offline, stop the llama server
+    if (this.currentProvider === 'offline') {
+      llamaService.stopServer();
+      console.log('[AIService] Stopped offline llama server');
+    }
   }
 
   /**
@@ -247,9 +279,37 @@ class AIService {
   }
 
   /**
-   * Chat with offline model (tool support disabled for stable conversational responses)
+   * Detect if user message requires MCP tool usage
+   * Only returns true for VERY EXPLICIT action requests
+   */
+  private shouldUseMCPTools(message: string): boolean {
+    const lower = message.toLowerCase().trim();
+    
+    // Very explicit patterns that clearly request actions
+    const actionPatterns = [
+      /^(list|show|get|find|display)\s+(all\s+)?(staff|tasks?|calls?|active)/i,
+      /^call\s+(staff|someone|[\w\s]+)(\s+named|\s+called)?\s+/i,
+      /^(create|add|make)\s+(new\s+)?(staff|task)/i,
+      /^(update|change|modify)\s+(staff|task)/i,
+      /^assign\s+task/i,
+      /^complete\s+task/i,
+      /^get\s+(staff|task|call)\s+(profile|status|result)/i,
+    ];
+    
+    // Check if message matches any action pattern
+    const isActionRequest = actionPatterns.some(pattern => pattern.test(lower));
+    
+    console.log(`[AIService] Tool detection: "${message.substring(0, 50)}..." -> ${isActionRequest ? 'ACTION' : 'CHAT'}`);
+    return isActionRequest;
+  }
+
+  /**
+   * Chat with offline model (WITH selective MCP tool support)
    */
   private async chatOffline(userMessage: string): Promise<ChatResult> {
+    const mcpService = getMCPService();
+    const toolCallTracker: ToolCallInfo[] = [];
+
     // Add user message to history
     this.conversationHistory.push({
       role: 'user',
@@ -263,10 +323,90 @@ class AIService {
         content: msg.content,
       }));
 
-      console.log(`[AIService] Offline chat - conversational mode (no tools)`);
+      // Detect if this message needs tools
+      const needsTools = this.shouldUseMCPTools(userMessage);
+      let toolsToPass: Array<{ type: string; function: { name: string; description: string; parameters: Record<string, unknown> } }> | undefined;
 
-      // Get response from local llama server WITHOUT tools for stable conversational responses
-      const result = await llamaService.chat(messages);
+      if (needsTools) {
+        // Get MCP tools and convert to OpenAI format
+        const mcpTools = mcpService.getAllTools();
+        if (mcpTools.length > 0) {
+          toolsToPass = mcpTools.map((mcpTool: MCPTool) => ({
+            type: 'function',
+            function: {
+              name: mcpTool.name,
+              description: mcpTool.description,
+              parameters: mcpTool.inputSchema,
+            },
+          }));
+          console.log(`[AIService] 🔧 Passing ${toolsToPass.length} tools to offline model`);
+        }
+      } else {
+        console.log(`[AIService] 💬 Conversational mode - no tools`);
+      }
+
+      // Get response from local llama server
+      const result = await llamaService.chat(messages, toolsToPass);
+
+      // Handle tool calls if present
+      if (result.toolCalls && result.toolCalls.length > 0) {
+        console.log(`[AIService] ⚡ Model requested ${result.toolCalls.length} tool call(s)`);
+        
+        // Execute all tool calls
+        for (const toolCall of result.toolCalls) {
+          const toolName = toolCall.function.name;
+          let toolArgs: Record<string, unknown>;
+          
+          try {
+            toolArgs = JSON.parse(toolCall.function.arguments);
+          } catch (parseError) {
+            console.error('[AIService] Failed to parse tool arguments:', toolCall.function.arguments);
+            continue;
+          }
+          
+          const callInfo: ToolCallInfo = {
+            id: toolCall.id,
+            name: toolName,
+            arguments: JSON.stringify(toolArgs, null, 2),
+            status: 'pending',
+          };
+          toolCallTracker.push(callInfo);
+
+          try {
+            console.log(`[AIService] Executing: ${toolName}`, toolArgs);
+            const toolResult = await mcpService.executeTool(toolName, toolArgs);
+            
+            if (toolResult.success) {
+              const resultStr = typeof toolResult.result === 'string'
+                ? toolResult.result
+                : JSON.stringify(toolResult.result, null, 2);
+              callInfo.result = resultStr;
+              callInfo.status = 'success';
+              console.log(`[AIService] ✓ Tool ${toolName} succeeded`);
+            } else {
+              callInfo.result = toolResult.error || 'Unknown error';
+              callInfo.status = 'error';
+              console.error(`[AIService] ✗ Tool ${toolName} failed:`, toolResult.error);
+            }
+          } catch (error) {
+            callInfo.result = error instanceof Error ? error.message : 'Unknown error';
+            callInfo.status = 'error';
+            console.error(`[AIService] ✗ Tool ${toolName} threw error:`, error);
+          }
+        }
+
+        // Add tool call to history
+        this.conversationHistory.push({
+          role: 'assistant',
+          content: result.content || `Executed ${toolCallTracker.length} tool call(s)`,
+        });
+
+        // Return with tool calls
+        return {
+          response: result.content || 'Tool execution complete',
+          toolCalls: toolCallTracker,
+        };
+      }
 
       // No tool calls - regular text response
       const response = result.content || '';
@@ -279,7 +419,7 @@ class AIService {
         });
       }
 
-      console.log(`[AIService] Offline response: "${response.substring(0, 100)}..."`);
+      console.log(`[AIService] Response: "${response.substring(0, 100)}..."`);
 
       return {
         response,
@@ -292,9 +432,11 @@ class AIService {
   }
 
   /**
-   * Stream chat with offline model (simulates streaming by chunking the response)
+   * Stream chat with offline model (WITH selective MCP tool support)
    */
   private async chatStreamOffline(userMessage: string, callbacks: StreamCallbacks): Promise<void> {
+    const mcpService = getMCPService();
+
     // Add user message to history
     this.conversationHistory.push({
       role: 'user',
@@ -302,14 +444,115 @@ class AIService {
     });
 
     try {
-      // Prepare messages for llama server
-      const messages = this.conversationHistory.map(msg => ({
+      // Prepare messages
+      const messages: Array<{ role: string; content: string }> = this.conversationHistory.map(msg => ({
         role: msg.role,
         content: msg.content,
       }));
 
-      // Get response from local llama server (without tools for streaming to keep it simple)
-      const result = await llamaService.chat(messages);
+      // Detect if this message needs tools
+      const needsTools = this.shouldUseMCPTools(userMessage);
+      let toolsToPass: Array<{ type: string; function: { name: string; description: string; parameters: Record<string, unknown> } }> | undefined;
+
+      if (needsTools) {
+        // Get MCP tools and convert to OpenAI format
+        const mcpTools = mcpService.getAllTools();
+        if (mcpTools.length > 0) {
+          toolsToPass = mcpTools.map((mcpTool: MCPTool) => ({
+            type: 'function',
+            function: {
+              name: mcpTool.name,
+              description: mcpTool.description,
+              parameters: mcpTool.inputSchema,
+            },
+          }));
+          console.log(`[AIService] 🔧 Passing ${toolsToPass.length} tools to offline model (streaming)`);
+        }
+      } else {
+        console.log(`[AIService] 💬 Conversational mode - no tools (streaming)`);
+      }
+
+      // Get response from local llama server
+      const result = await llamaService.chat(messages, toolsToPass);
+
+      // Handle tool calls if present
+      if (result.toolCalls && result.toolCalls.length > 0) {
+        console.log(`[AIService] ⚡ Model requested ${result.toolCalls.length} tool call(s) in stream`);
+        
+        // Execute all tool calls
+        const toolResults: string[] = [];
+        for (const toolCall of result.toolCalls) {
+          const toolName = toolCall.function.name;
+          let toolArgs: Record<string, unknown>;
+          
+          try {
+            toolArgs = JSON.parse(toolCall.function.arguments);
+          } catch (parseError) {
+            console.error('[AIService] Failed to parse tool arguments:', toolCall.function.arguments);
+            continue;
+          }
+
+          // Notify about the tool call (for card rendering)
+          const callInfo: ToolCallInfo = {
+            id: toolCall.id,
+            name: toolName,
+            arguments: JSON.stringify(toolArgs, null, 2),
+            status: 'pending',
+          };
+          callbacks.onToolCall(callInfo);
+
+          try {
+            console.log(`[AIService] Executing: ${toolName}`, toolArgs);
+            const toolResult = await mcpService.executeTool(toolName, toolArgs);
+            
+            if (toolResult.success) {
+              const resultStr = typeof toolResult.result === 'string'
+                ? toolResult.result
+                : JSON.stringify(toolResult.result, null, 2);
+              toolResults.push(`✓ ${toolName}: ${resultStr}`);
+              callInfo.result = resultStr;
+              callInfo.status = 'success';
+              callbacks.onToolResult(toolCall.id, resultStr, 'success');
+              console.log(`[AIService] ✓ Tool ${toolName} succeeded`);
+            } else {
+              const errorMsg = toolResult.error || 'Unknown error';
+              toolResults.push(`✗ ${toolName}: ${errorMsg}`);
+              callInfo.result = errorMsg;
+              callInfo.status = 'error';
+              callbacks.onToolResult(toolCall.id, errorMsg, 'error');
+              console.error(`[AIService] ✗ Tool ${toolName} failed:`, toolResult.error);
+            }
+          } catch (error) {
+            const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+            toolResults.push(`✗ ${toolName}: ${errorMsg}`);
+            callInfo.result = errorMsg;
+            callInfo.status = 'error';
+            callbacks.onToolResult(toolCall.id, errorMsg, 'error');
+            console.error(`[AIService] ✗ Tool ${toolName} threw error:`, error);
+          }
+        }
+
+        // Stream the tool results
+        const responseText = result.content || toolResults.join('\n');
+        const chunkSize = 5;
+        for (let i = 0; i < responseText.length; i += chunkSize) {
+          const chunk = responseText.slice(i, i + chunkSize);
+          callbacks.onTextChunk(chunk);
+          await new Promise(resolve => setTimeout(resolve, 20));
+        }
+
+        // Add to history
+        this.conversationHistory.push({
+          role: 'assistant',
+          content: responseText,
+        });
+
+        console.log(`[AIService] Offline stream complete with tools: "${responseText.substring(0, 100)}..."`);
+        callbacks.onComplete(responseText);
+        return;
+      }
+
+      // No tool calls - regular text response
       const responseText = result.content || '';
 
       // Simulate streaming by sending chunks

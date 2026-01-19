@@ -84,9 +84,9 @@ export class LlamaService {
       // Spawn llama-server with required flags
       this.serverProcess = spawn(llamaServerPath, [
         '--model', resolvedModelPath,
-        '--ctx-size', '2048',
+        '--ctx-size', '8192', // Increased for function calling with multiple tools
         '--threads', '4',
-        '--batch-size', '256',
+        '--batch-size', '512', // Increased batch size for better performance
         '--port', this.serverPort.toString(),
         '--host', '127.0.0.1',
         '--n-gpu-layers', '0', // CPU only - change if you want GPU support
