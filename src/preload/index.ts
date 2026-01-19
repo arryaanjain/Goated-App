@@ -206,6 +206,19 @@ const api = {
     getDownloadProgress: (modelId: string): Promise<DownloadProgress> =>
       ipcRenderer.invoke('model:getDownloadProgress', modelId),
   },
+
+  // API key management
+  api: {
+    setKeys: (config: { 
+      openaiApiKey?: string; 
+      geminiApiKey?: string; 
+      selectedModel?: string;
+      provider?: 'openai' | 'gemini';
+    }): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke('api:setKeys', config),
+    getStatus: (): Promise<{ initialized: boolean; provider: string; currentModel: string }> =>
+      ipcRenderer.invoke('api:getStatus'),
+  },
 };
 
 // Expose the API to the renderer process

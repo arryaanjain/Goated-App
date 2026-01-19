@@ -2,7 +2,8 @@ import React, { useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import './Message.css';
-import { ToolCallCard, type ToolCall } from './ToolCallCard';
+import { type ToolCall } from './ToolCallCard';
+import { CardRenderer } from '../cards/CardRenderer';
 
 interface MessageProps {
   role: 'user' | 'assistant' | 'tool';
@@ -110,7 +111,12 @@ export const Message: React.FC<MessageProps> = ({
             {toolCalls && toolCalls.length > 0 && (
               <div className="message__tool-calls">
                 {toolCalls.map((toolCall) => (
-                  <ToolCallCard key={toolCall.id} toolCall={toolCall} />
+                  <CardRenderer
+                    key={toolCall.id}
+                    toolName={toolCall.name}
+                    toolOutput={toolCall.result || ''}
+                    status={toolCall.status}
+                  />
                 ))}
               </div>
             )}

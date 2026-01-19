@@ -1,11 +1,12 @@
 /**
  * AIService - AI Chat Service using Vercel AI SDK
  * 
- * Provides chat functionality with Gemini 2.5 Pro and automatic tool execution
+ * Provides chat functionality with OpenAI and Gemini with automatic tool execution
  * via connected MCP servers. Supports both streaming and non-streaming modes.
  */
 
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
+import { createOpenAI } from '@ai-sdk/openai';
 import { generateText, streamText, stepCountIs } from 'ai';
 import { tool } from '@ai-sdk/provider-utils';
 import { z } from 'zod';
@@ -40,15 +41,17 @@ export interface StreamCallbacks {
   onError: (error: Error) => void;
 }
 
-// Gemini model configuration
-const GEMINI_MODEL = 'gemini-2.5-flash-lite';
+export type AIProvider = 'openai' | 'gemini';
 
 /**
  * AIService class for managing AI chat with tool execution
  */
 class AIService {
   private static instance: AIService;
+  private openai: ReturnType<typeof createOpenAI> | null = null;
   private google: ReturnType<typeof createGoogleGenerativeAI> | null = null;
+  private currentProvider: AIProvider = 'openai';
+  private currentModel: string = 'gpt-4o-mini';
   private conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }> = [];
 
   private constructor() {}
@@ -61,18 +64,62 @@ class AIService {
   }
 
   /**
-   * Initialize the Google AI client with API key
+   * Initialize with OpenAI API key
    */
-  initialize(apiKey: string): void {
+  initializeOpenAI(apiKey: string, model: string = 'gpt-4o-mini'): void {
+    this.openai = createOpenAI({ apiKey });
+    this.currentProvider = 'openai';
+    this.currentModel = model;
+    console.log('[AIService] Initialized with OpenAI model:', model);
+  }
+
+  /**
+   * Initialize with Google Gemini API key
+   */
+  initializeGemini(apiKey: string, model: string = 'gemini-2.5-flash-lite'): void {
     this.google = createGoogleGenerativeAI({ apiKey });
-    console.log('[AIService] Initialized with Gemini model:', GEMINI_MODEL);
+    this.currentProvider = 'gemini';
+    this.currentModel = model;
+    console.log('[AIService] Initialized with Gemini model:', model);
+  }
+
+  /**
+   * Set the active model
+   */
+  setModel(model: string): void {
+    this.currentModel = model;
+    console.log('[AIService] Model changed to:', model);
+  }
+
+  /**
+   * Get current provider and model
+   */
+  getStatus(): { provider: AIProvider; model: string; initialized: boolean } {
+    return {
+      provider: this.currentProvider,
+      model: this.currentModel,
+      initialized: this.isInitialized(),
+    };
   }
 
   /**
    * Check if the service is initialized
    */
   isInitialized(): boolean {
-    return this.google !== null;
+    return this.openai !== null || this.google !== null;
+  }
+
+  /**
+   * Get the current model instance
+   */
+  private getModel(): any {
+    if (this.currentProvider === 'openai' && this.openai) {
+      return this.openai(this.currentModel);
+    }
+    if (this.currentProvider === 'gemini' && this.google) {
+      return this.google(this.currentModel);
+    }
+    throw new Error('AI Service not initialized');
   }
 
   /**
@@ -179,8 +226,8 @@ class AIService {
    * Send a chat message and get a response with tool execution
    */
   async chat(userMessage: string): Promise<ChatResult> {
-    if (!this.google) {
-      throw new Error('AIService not initialized. Call initialize() with API key first.');
+    if (!this.isInitialized()) {
+      throw new Error('AI Service not initialized. Please configure API keys in Settings.');
     }
 
     const mcpService = getMCPService();
@@ -203,9 +250,8 @@ class AIService {
       console.log(`[AIService] Tools:`, mcpTools.map(t => t.name));
 
       // Generate response with automatic tool execution
-      // stopWhen: stepCountIs(5) allows up to 5 steps (tool calls + final response)
       const result = await generateText({
-        model: this.google(GEMINI_MODEL),
+        model: this.getModel(),
         messages: this.conversationHistory,
         tools,
         stopWhen: stepCountIs(5), // Allow multiple tool execution steps
@@ -266,8 +312,8 @@ class AIService {
    * Stream a chat message with real-time text updates
    */
   async chatStream(userMessage: string, callbacks: StreamCallbacks): Promise<void> {
-    if (!this.google) {
-      callbacks.onError(new Error('AIService not initialized. Call initialize() with API key first.'));
+    if (!this.isInitialized()) {
+      callbacks.onError(new Error('AI Service not initialized. Please configure API keys in Settings.'));
       return;
     }
 
@@ -291,7 +337,7 @@ class AIService {
 
       // Stream response with automatic tool execution
       const result = streamText({
-        model: this.google(GEMINI_MODEL),
+        model: this.getModel(),
         messages: this.conversationHistory,
         tools,
         stopWhen: stepCountIs(5),

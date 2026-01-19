@@ -31,6 +31,7 @@
   "dependencies": {
     "@ai-sdk/google": "^3.0.6",
     "@ai-sdk/mcp": "^1.0.5",
+    "@ai-sdk/openai": "^3.0.12",
     "@modelcontextprotocol/sdk": "^1.25.2",
     "ai": "^6.0.20",
     "electron-squirrel-startup": "^1.0.1",

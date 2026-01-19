@@ -10,12 +10,6 @@ config();
 
 let mainWindow: BrowserWindow | null = null;
 
-// Backend configuration
-const BACKEND_URL = 'http://127.0.0.1:8000';
-
-// Conversation history for context
-let conversationHistory: Array<{ role: string; content: string; tool_calls?: unknown[] }> = [];
-
 // Initialize services
 const whisperService = getWhisperService();
 const mcpService = getMCPService();
@@ -81,13 +75,44 @@ app.whenReady().then(async () => {
     console.error('[GoatedApp] Failed to initialize WhisperService:', error);
   }
 
-  // Initialize AIService with Gemini API key from environment
-  const geminiApiKey = process.env.GEMINI_API_KEY;
-  if (geminiApiKey) {
-    aiService.initialize(geminiApiKey);
-    console.log('[GoatedApp] AIService initialized with Gemini');
-  } else {
-    console.warn('[GoatedApp] GEMINI_API_KEY not found - AI features will use Python backend');
+  // Try to load API keys from localStorage via a config file
+  // Since we can't access localStorage from main process, we'll use a JSON file
+  const userDataPath = app.getPath('userData');
+  const configPath = path.join(userDataPath, 'api-config.json');
+  
+  try {
+    const fs = await import('fs/promises');
+    const configData = await fs.readFile(configPath, 'utf-8');
+    const config = JSON.parse(configData);
+    
+    // Initialize with saved API keys
+    if (config.openaiApiKey) {
+      aiService.initializeOpenAI(config.openaiApiKey, config.selectedModel || 'gpt-4o-mini');
+      console.log('[GoatedApp] AIService initialized with OpenAI from saved config');
+    } else if (config.geminiApiKey) {
+      aiService.initializeGemini(config.geminiApiKey, config.selectedModel || 'gemini-2.5-flash-lite');
+      console.log('[GoatedApp] AIService initialized with Gemini from saved config');
+    } else {
+      console.warn('[GoatedApp] No API keys found in config');
+    }
+  } catch (error) {
+    console.log('[GoatedApp] No saved API config found - user needs to configure in Settings');
+  }
+
+  // Fallback: Try environment variables
+  if (!aiService.isInitialized()) {
+    const openaiKey = process.env.OPENAI_API_KEY;
+    const geminiKey = process.env.GEMINI_API_KEY;
+    
+    if (openaiKey) {
+      aiService.initializeOpenAI(openaiKey);
+      console.log('[GoatedApp] AIService initialized with OpenAI from environment');
+    } else if (geminiKey) {
+      aiService.initializeGemini(geminiKey);
+      console.log('[GoatedApp] AIService initialized with Gemini from environment');
+    } else {
+      console.warn('[GoatedApp] No API keys found - user must configure in Settings');
+    }
   }
 
   createWindow();
@@ -128,23 +153,17 @@ ipcMain.handle('app:getInfo', () => {
   };
 });
 
-// Placeholder for backend status - now checks actual Python backend
+// Backend status - now returns AI service status instead of Python backend
 ipcMain.handle('backend:status', async () => {
-  try {
-    const response = await fetch(`${BACKEND_URL}/health`);
-    if (response.ok) {
-      const data = await response.json() as { model_loaded?: boolean };
-      return {
-        running: true,
-        pid: null,
-        restartCount: 0,
-        healthy: data.model_loaded === true,
-      };
-    }
-    return { running: false, pid: null, restartCount: 0, healthy: false };
-  } catch {
-    return { running: false, pid: null, restartCount: 0, healthy: false };
-  }
+  const status = aiService.getStatus();
+  return {
+    running: status.initialized,
+    pid: null,
+    restartCount: 0,
+    healthy: status.initialized,
+    provider: status.provider,
+    model: status.model,
+  };
 });
 
 // Transcription handler - Requirement 4.10: IPC handler at 'transcription:transcribe'
@@ -179,145 +198,33 @@ ipcMain.handle('transcription:getModel', () => {
   return whisperService.getModelName();
 });
 
-// Chat handler - uses AIService with MCP tools or falls back to Python backend
+// Chat handler - uses AIService with MCP tools
 ipcMain.handle('chat:send', async (_event, message: string) => {
   try {
-    // If AIService is initialized, use Vercel AI SDK
-    if (aiService.isInitialized()) {
-      console.log('[Chat] Using AIService with Vercel AI SDK');
-      const result = await aiService.chat(message);
-      return {
-        response: result.response,
-        toolCalls: result.toolCalls?.map(tc => ({
-          id: tc.id,
-          name: tc.name,
-          arguments: tc.arguments,
-          result: tc.result,
-          status: tc.status,
-        })),
-      };
+    if (!aiService.isInitialized()) {
+      throw new Error('AI Service not initialized. Please configure API keys in Settings.');
     }
 
-    // Fall back to Python backend
-    console.log('[Chat] Using Python backend');
-    
-    // Add user message to history
-    conversationHistory.push({ role: 'user', content: message });
-
-    // Get MCP tools for the request
-    const mcpTools = mcpService.getToolsForGemini();
-
-    // Prepare request to Python backend
-    const requestBody = {
-      messages: conversationHistory.map(msg => ({
-        role: msg.role,
-        content: msg.content,
-        tool_calls: msg.tool_calls,
-      })),
-      model: 'gemini-2.5-flash',
-      temperature: 0.0,
-      tools: mcpTools.length > 0 ? mcpTools : undefined,
-    };
-
-    // Call the Python backend
-    const response = await fetch(`${BACKEND_URL}/v1/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(requestBody),
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({ detail: 'Unknown error' })) as { detail?: string };
-      throw new Error(errorData.detail || `Backend error: ${response.status}`);
-    }
-
-    const data = await response.json() as {
-      choices?: Array<{
-        message?: {
-          content?: string;
-          tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>;
-        };
-        finish_reason?: string;
-      }>;
-    };
-    
-    // Extract the assistant's response
-    const assistantMessage = data.choices?.[0]?.message;
-    const finishReason = data.choices?.[0]?.finish_reason;
-    
-    if (!assistantMessage) {
-      throw new Error('Invalid response from backend');
-    }
-
-    // Handle tool calls if present
-    let toolCallResults: Array<{ id: string; name: string; arguments: string; result?: string; status: string }> = [];
-    let finalResponse = assistantMessage.content || '';
-    
-    if (finishReason === 'tool_calls' && assistantMessage.tool_calls) {
-      // Execute each tool call via MCP
-      const toolResults: string[] = [];
-      
-      for (const tc of assistantMessage.tool_calls) {
-        const toolArgs = JSON.parse(tc.function.arguments);
-        const result = await mcpService.executeTool(tc.function.name, toolArgs);
-        
-        // Get the result as a string
-        const resultStr = result.success 
-          ? (typeof result.result === 'string' ? result.result : JSON.stringify(result.result))
-          : (result.error || 'Tool execution failed');
-        
-        toolCallResults.push({
-          id: tc.id,
-          name: tc.function.name,
-          arguments: JSON.stringify(toolArgs, null, 2),
-          result: resultStr,
-          status: result.success ? 'success' : 'error',
-        });
-        
-        if (result.success) {
-          toolResults.push(`${tc.function.name}: ${resultStr}`);
-        }
-      }
-      
-      // If we have tool results but no text response, create a summary
-      if (!finalResponse && toolResults.length > 0) {
-        finalResponse = toolResults.join('\n');
-      }
-
-      // Add assistant message with tool calls to history
-      conversationHistory.push({
-        role: 'assistant',
-        content: finalResponse,
-        tool_calls: assistantMessage.tool_calls,
-      });
-    } else {
-      // No tool calls, just add the response
-      conversationHistory.push({
-        role: 'assistant',
-        content: finalResponse,
-      });
-    }
-
-    // Return response in expected format
+    console.log('[Chat] Using AIService with Vercel AI SDK');
+    const result = await aiService.chat(message);
     return {
-      response: finalResponse,
-      toolCalls: toolCallResults.length > 0 ? toolCallResults : undefined,
+      response: result.response,
+      toolCalls: result.toolCalls?.map(tc => ({
+        id: tc.id,
+        name: tc.name,
+        arguments: tc.arguments,
+        result: tc.result,
+        status: tc.status,
+      })),
     };
   } catch (error) {
     console.error('[Chat] Error:', error);
-    // Remove the failed user message from history if using Python backend
-    if (!aiService.isInitialized() && conversationHistory.length > 0) {
-      conversationHistory.pop();
-    }
     throw error;
   }
 });
 
 // Clear conversation history
 ipcMain.handle('chat:clear', () => {
-  conversationHistory = [];
   aiService.clearHistory();
   return { success: true };
 });
@@ -518,6 +425,52 @@ ipcMain.handle('model:download', async (_event, _modelId: string) => {
 
 ipcMain.handle('model:getDownloadProgress', async (_event, _modelId: string) => {
   return { modelId: _modelId, bytesDownloaded: 0, totalBytes: 0, percentage: 0 };
+});
+
+// API Key management
+ipcMain.handle('api:setKeys', async (_event, config: { openaiApiKey?: string; geminiApiKey?: string; selectedModel?: string; provider?: 'openai' | 'gemini' }) => {
+  try {
+    // Save config to file
+    const userDataPath = app.getPath('userData');
+    const configPath = path.join(userDataPath, 'api-config.json');
+    const fs = await import('fs/promises');
+    
+    await fs.writeFile(configPath, JSON.stringify(config, null, 2), 'utf-8');
+    console.log('[API] Config saved to:', configPath);
+    
+    // Initialize the appropriate service
+    if (config.provider === 'openai' && config.openaiApiKey) {
+      aiService.initializeOpenAI(config.openaiApiKey, config.selectedModel || 'gpt-4o-mini');
+      console.log('[API] OpenAI API key updated');
+    } else if (config.provider === 'gemini' && config.geminiApiKey) {
+      aiService.initializeGemini(config.geminiApiKey, config.selectedModel || 'gemini-2.5-flash-lite');
+      console.log('[API] Gemini API key updated');
+    } else if (config.openaiApiKey) {
+      // Default to OpenAI if no provider specified
+      aiService.initializeOpenAI(config.openaiApiKey, config.selectedModel || 'gpt-4o-mini');
+      console.log('[API] OpenAI API key updated (default)');
+    } else if (config.geminiApiKey) {
+      aiService.initializeGemini(config.geminiApiKey, config.selectedModel || 'gemini-2.5-flash-lite');
+      console.log('[API] Gemini API key updated');
+    }
+    
+    return { success: true };
+  } catch (error) {
+    console.error('[API] Failed to set API keys:', error);
+    return { 
+      success: false, 
+      error: error instanceof Error ? error.message : 'Unknown error' 
+    };
+  }
+});
+
+ipcMain.handle('api:getStatus', () => {
+  const status = aiService.getStatus();
+  return {
+    initialized: status.initialized,
+    provider: status.provider,
+    currentModel: status.model,
+  };
 });
 
 console.log('[GoatedApp] Main process initialized');

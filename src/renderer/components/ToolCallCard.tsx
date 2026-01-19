@@ -5,7 +5,7 @@ export interface ToolCall {
   id: string;
   name: string;
   arguments: string;
-  result?: string;
+  result?: string | any; // Can be string or parsed object
   status: 'pending' | 'success' | 'error';
 }
 
@@ -49,9 +49,15 @@ export const ToolCallCard: React.FC<ToolCallCardProps> = ({ toolCall }) => {
 
   const getResultPreview = () => {
     if (!toolCall.result) return 'Running...';
+    
+    // Handle result as object or string
+    const resultStr = typeof toolCall.result === 'string' 
+      ? toolCall.result 
+      : JSON.stringify(toolCall.result);
+    
     const maxLength = 50;
-    if (toolCall.result.length <= maxLength) return toolCall.result;
-    return toolCall.result.slice(0, maxLength) + '...';
+    if (resultStr.length <= maxLength) return resultStr;
+    return resultStr.slice(0, maxLength) + '...';
   };
 
   return (
@@ -97,7 +103,11 @@ export const ToolCallCard: React.FC<ToolCallCardProps> = ({ toolCall }) => {
         {toolCall.result && (
           <div className="tool-card__section">
             <span className="tool-card__section-label">Result</span>
-            <pre className="tool-card__code">{toolCall.result}</pre>
+            <pre className="tool-card__code">
+              {typeof toolCall.result === 'string' 
+                ? toolCall.result 
+                : JSON.stringify(toolCall.result, null, 2)}
+            </pre>
           </div>
         )}
       </div>

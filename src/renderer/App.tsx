@@ -83,6 +83,7 @@ function App() {
         id: tc.id,
         name: tc.name,
         arguments: tc.arguments,
+        result: tc.result, // IMPORTANT: Include result for card rendering
         status: tc.status
       })),
     })),
