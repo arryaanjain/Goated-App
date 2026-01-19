@@ -1,0 +1,168 @@
+/**
+ * StaffProfileCard Styles
+ * Modern minimalist aesthetic with brand colors
+ */
+
+.staff-card {
+  /* Background gradient - Sage to Slate Blue */
+  background: linear-gradient(135deg, var(--color-sage-900) 0%, var(--color-slate-blue-900) 100%);
+  
+  /* Card styling */
+  padding: 24px;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  
+  /* Layout */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  
+  /* Positioning for overlay */
+  position: relative;
+  overflow: hidden;
+  
+  /* Spacing */
+  margin: 12px 0;
+  
+  /* Animation */
+  animation: fadeIn 0.3s ease-out;
+}
+
+/* Subtle overlay for depth */
+.staff-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(8px);
+  border-radius: inherit;
+  z-index: 0;
+}
+
+/* Content container */
+.staff-card__content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+/* Name - Primary focus */
+.staff-card__name {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  line-height: 1.2;
+  color: var(--color-surface);
+  margin: 0;
+}
+
+/* Role - Secondary info */
+.staff-card__role {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--color-sage-100);
+  margin: 0;
+}
+
+/* Phone number */
+.staff-card__phone {
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--color-sage-100);
+  margin: 0;
+}
+
+/* Department */
+.staff-card__department {
+  font-size: 14px;
+  color: var(--color-slate-blue-500);
+  margin: 0;
+}
+
+/* Status */
+.staff-card__status {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--color-slate-blue-500);
+  margin: 8px 0 0 0;
+  padding: 6px 16px;
+  background: rgba(100, 125, 148, 0.2);
+  border-radius: var(--radius-md);
+  transition: all var(--transition-normal);
+}
+
+/* Available status - Sage green accent */
+.staff-card__status--available {
+  color: var(--color-sage-100);
+  background: rgba(93, 133, 112, 0.2);
+  text-shadow: 0 0 8px rgba(93, 133, 112, 0.4);
+}
+
+/* Recent tasks section */
+.staff-card__tasks {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  width: 100%;
+}
+
+.staff-card__tasks-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-slate-blue-500);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.staff-card__task {
+  font-size: 14px;
+  color: var(--color-sage-100);
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: var(--radius-sm);
+  text-align: left;
+}
+
+/* Fade in animation */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Responsive - Mobile */
+@media (max-width: 640px) {
+  .staff-card {
+    padding: 20px;
+    margin: 10px 0;
+  }
+  
+  .staff-card__name {
+    font-size: 20px;
+  }
+}
+
+/* Responsive - Tablet */
+@media (min-width: 641px) and (max-width: 1024px) {
+  .staff-card {
+    padding: 22px;
+  }
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  .staff-card {
+    animation: none;
+  }
+}
