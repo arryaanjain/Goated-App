@@ -126,8 +126,10 @@ const GeneralTab: React.FC = () => (
 const ModelsTab: React.FC = () => {
   const [geminiApiKey, setGeminiApiKey] = useState('');
   const [openaiApiKey, setOpenaiApiKey] = useState('');
-  const [selectedModel, setSelectedModel] = useState('gpt-4o-mini');
-  const [selectedProvider, setSelectedProvider] = useState<'openai' | 'gemini'>('openai');
+  const [selectedModel, setSelectedModel] = useState('llama3.2-3b-q4');
+  const [selectedProvider, setSelectedProvider] = useState<'openai' | 'gemini' | 'offline'>('offline');
+  const [offlineModelPath, setOfflineModelPath] = useState('');
+  const [offlineServerStatus, setOfflineServerStatus] = useState<{ running: boolean; ready: boolean; modelPath: string | null } | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [currentStatus, setCurrentStatus] = useState<{ initialized: boolean; provider: string; currentModel: string } | null>(null);
@@ -142,7 +144,8 @@ const ModelsTab: React.FC = () => {
           const parsed = JSON.parse(keys);
           setGeminiApiKey(parsed.gemini || '');
           setOpenaiApiKey(parsed.openai || '');
-          setSelectedProvider(parsed.provider || 'openai');
+          setOfflineModelPath(parsed.offlineModelPath || '');
+          setSelectedProvider(parsed.provider || 'offline');
         }
         
         const model = localStorage.getItem('selected_model');
@@ -153,6 +156,10 @@ const ModelsTab: React.FC = () => {
         // Get current AI service status
         const status = await window.api.api.getStatus();
         setCurrentStatus(status);
+        
+        // Get offline server status
+        const offlineStatus = await window.api.offline.getStatus();
+        setOfflineServerStatus(offlineStatus);
       } catch (error) {
         console.error('[ModelsTab] Failed to load API keys:', error);
       }
@@ -161,13 +168,15 @@ const ModelsTab: React.FC = () => {
   }, []);
 
   // Update model options when provider changes
-  const handleProviderChange = (provider: 'openai' | 'gemini') => {
+  const handleProviderChange = (provider: 'openai' | 'gemini' | 'offline') => {
     setSelectedProvider(provider);
     // Set default model for the provider
     if (provider === 'openai') {
       setSelectedModel('gpt-4o-mini');
-    } else {
+    } else if (provider === 'gemini') {
       setSelectedModel('gemini-2.5-flash-lite');
+    } else {
+      setSelectedModel('llama3.2-3b-q4');
     }
   };
 
@@ -176,44 +185,52 @@ const ModelsTab: React.FC = () => {
     setSaveStatus('idle');
     
     try {
-      // Validate that the selected provider has an API key
+      // Validate that the selected provider has required configuration
       if (selectedProvider === 'openai' && !openaiApiKey) {
         throw new Error('OpenAI API key is required');
       }
       if (selectedProvider === 'gemini' && !geminiApiKey) {
         throw new Error('Gemini API key is required');
       }
+      // Offline model uses bundled model, no validation needed
 
       // Save to localStorage
       localStorage.setItem('api_keys', JSON.stringify({
         gemini: geminiApiKey,
         openai: openaiApiKey,
+        offlineModelPath: offlineModelPath,
         provider: selectedProvider,
       }));
       localStorage.setItem('selected_model', selectedModel);
       
-      // Update API keys in main process
+      // Update configuration in main process
       const result = await window.api.api.setKeys({
         openaiApiKey: openaiApiKey || undefined,
         geminiApiKey: geminiApiKey || undefined,
+        offlineModelPath: offlineModelPath || undefined,
         selectedModel,
         provider: selectedProvider,
       });
       
       if (!result.success) {
-        throw new Error(result.error || 'Failed to set API keys');
+        throw new Error(result.error || 'Failed to save configuration');
       }
       
       // Refresh status
       const status = await window.api.api.getStatus();
       setCurrentStatus(status);
       
+      if (selectedProvider === 'offline') {
+        const offlineStatus = await window.api.offline.getStatus();
+        setOfflineServerStatus(offlineStatus);
+      }
+      
       setSaveStatus('success');
       
       // Show success message briefly
       setTimeout(() => setSaveStatus('idle'), 3000);
     } catch (error) {
-      console.error('[ModelsTab] Failed to save API keys:', error);
+      console.error('[ModelsTab] Failed to save configuration:', error);
       setSaveStatus('error');
     } finally {
       setIsSaving(false);
@@ -232,11 +249,15 @@ const ModelsTab: React.FC = () => {
         { value: 'gpt-4o-mini', label: 'GPT-4o Mini (Fast & Cheap)' },
         { value: 'gpt-4-turbo', label: 'GPT-4 Turbo' },
       ];
-    } else {
+    } else if (selectedProvider === 'gemini') {
       return [
         { value: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite (Fast)' },
         { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
         { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro (Best)' },
+      ];
+    } else {
+      return [
+        { value: 'llama3.2-3b-q4', label: 'Llama 3.2 3B Q4 (Offline)' },
       ];
     }
   };
@@ -263,12 +284,29 @@ const ModelsTab: React.FC = () => {
       <div className="settings-tab__section">
         <h4 className="settings-tab__section-title">Provider Selection</h4>
         <p className="settings-tab__section-description">
-          Choose your AI provider. OpenAI is recommended for best results.
+          Choose your AI provider. Offline model runs locally for complete privacy.
         </p>
         
         <div className="settings-tab__form-group">
           <label className="settings-tab__label">Active Provider</label>
           <div style={{ display: 'flex', gap: 'var(--spacing-3)' }}>
+            <button
+              type="button"
+              onClick={() => handleProviderChange('offline')}
+              style={{
+                flex: 1,
+                padding: 'var(--spacing-3)',
+                border: selectedProvider === 'offline' ? '2px solid var(--color-sage-500)' : '1px solid var(--color-gray-200)',
+                borderRadius: 'var(--radius-md)',
+                backgroundColor: selectedProvider === 'offline' ? 'var(--color-sage-50)' : 'transparent',
+                cursor: 'pointer',
+              }}
+            >
+              <strong>🔒 Offline Model</strong>
+              <div style={{ fontSize: 'var(--font-size-tiny)', color: 'var(--color-text-secondary)' }}>
+                Llama 3.2 3B (Privacy First)
+              </div>
+            </button>
             <button
               type="button"
               onClick={() => handleProviderChange('openai')}
@@ -308,10 +346,57 @@ const ModelsTab: React.FC = () => {
       </div>
 
       <div className="settings-tab__section">
-        <h4 className="settings-tab__section-title">API Keys</h4>
+        <h4 className="settings-tab__section-title">
+          {selectedProvider === 'offline' ? 'Offline Model Configuration' : 'API Keys'}
+        </h4>
         <p className="settings-tab__section-description">
-          Enter your API key for the selected provider. Keys are stored locally and never sent to external servers.
+          {selectedProvider === 'offline' 
+            ? 'Configure your local offline model. All processing happens on your device.'
+            : 'Enter your API key for the selected provider. Keys are stored locally and never sent to external servers.'}
         </p>
+        
+        {selectedProvider === 'offline' && (
+          <div className="settings-tab__form-group">
+            <label className="settings-tab__label">
+              Bundled Offline Model
+            </label>
+            <div style={{
+              padding: 'var(--spacing-3)',
+              backgroundColor: 'var(--color-sage-50)',
+              borderRadius: 'var(--radius-md)',
+              border: '1px solid var(--color-sage-200)',
+            }}>
+              <div style={{ fontWeight: 600, marginBottom: 'var(--spacing-1)' }}>
+                Llama 3.2 3B (Q4 Quantized)
+              </div>
+              <div style={{ fontSize: 'var(--font-size-small)', color: 'var(--color-text-secondary)' }}>
+                Fully offline, privacy-first AI model
+              </div>
+            </div>
+            {offlineServerStatus && (
+              <div style={{ 
+                marginTop: 'var(--spacing-3)', 
+                padding: 'var(--spacing-3)',
+                backgroundColor: offlineServerStatus.ready ? 'var(--color-sage-50)' : '#fef3c7',
+                borderRadius: 'var(--radius-md)',
+                border: `1px solid ${offlineServerStatus.ready ? 'var(--color-sage-300)' : '#fcd34d'}`,
+              }}>
+                <div style={{ fontWeight: 600, marginBottom: 'var(--spacing-2)' }}>
+                  {offlineServerStatus.ready ? '✓ Running' : offlineServerStatus.running ? '⏳ Starting...' : '⚠ Stopped'}
+                </div>
+                {offlineServerStatus.modelPath && (
+                  <div style={{ 
+                    fontSize: 'var(--font-size-tiny)', 
+                    color: 'var(--color-text-secondary)',
+                    wordBreak: 'break-all'
+                  }}>
+                    {offlineServerStatus.modelPath}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
         
         {selectedProvider === 'openai' && (
           <div className="settings-tab__form-group">
@@ -399,11 +484,11 @@ const ModelsTab: React.FC = () => {
         )}
       </div>
 
-      {(openaiApiKey || geminiApiKey) && (
+      {(openaiApiKey || geminiApiKey || offlineModelPath) && (
         <div className="settings-tab__info-box">
           <h4 className="settings-tab__info-title">Current Configuration</h4>
           <p className="settings-tab__info-text">
-            <strong>Provider:</strong> {selectedProvider === 'openai' ? 'OpenAI' : 'Google Gemini'}
+            <strong>Provider:</strong> {selectedProvider === 'openai' ? 'OpenAI' : selectedProvider === 'gemini' ? 'Google Gemini' : 'Offline Model'}
           </p>
           {openaiApiKey && (
             <p className="settings-tab__info-text">
@@ -413,6 +498,11 @@ const ModelsTab: React.FC = () => {
           {geminiApiKey && (
             <p className="settings-tab__info-text">
               <strong>Gemini API Key:</strong> {maskApiKey(geminiApiKey)}
+            </p>
+          )}
+          {selectedProvider === 'offline' && (
+            <p className="settings-tab__info-text">
+              <strong>Offline Model:</strong> Bundled Llama 3.2 3B (Q4)
             </p>
           )}
           <p className="settings-tab__info-text">
