@@ -451,3 +451,175 @@
   background: #f3f4f6;
   border-color: #d1d5db;
 }
+
+/* Saved Servers Section */
+.tool-modal__hint--section {
+  margin-bottom: 16px;
+}
+
+.tool-modal__server-item--saved {
+  background: linear-gradient(135deg, rgba(42, 61, 51, 0.05) 0%, rgba(42, 59, 76, 0.05) 100%);
+  border: 1px solid rgba(93, 133, 112, 0.2);
+}
+
+.tool-modal__server-item--saved:hover {
+  background: linear-gradient(135deg, rgba(42, 61, 51, 0.08) 0%, rgba(42, 59, 76, 0.08) 100%);
+  border-color: rgba(93, 133, 112, 0.3);
+}
+
+.tool-modal__server-item--connected {
+  background: linear-gradient(135deg, rgba(93, 133, 112, 0.1) 0%, rgba(100, 125, 148, 0.1) 100%);
+  border: 1px solid rgba(93, 133, 112, 0.3);
+}
+
+.tool-modal__server-item--connected:hover {
+  background: linear-gradient(135deg, rgba(93, 133, 112, 0.15) 0%, rgba(100, 125, 148, 0.15) 100%);
+  border-color: rgba(93, 133, 112, 0.4);
+}
+
+.tool-modal__server-item--already-connected {
+  opacity: 0.7;
+}
+
+.tool-modal__server-status--connected {
+  background: #10b981;
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.4);
+}
+
+.tool-modal__server-status--saved {
+  background: #6b7280;
+  animation: none;
+}
+
+.tool-modal__connected-badge {
+  padding: 2px 8px;
+  background: rgba(93, 133, 112, 0.2);
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #2A3D33;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.tool-modal__server-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.tool-modal__server-meta-item {
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.tool-modal__server-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.tool-modal__retry-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  
+  padding: 8px 14px;
+  
+  background: linear-gradient(135deg, #5D8570 0%, #3D5C4C 100%);
+  border: none;
+  border-radius: 8px;
+  
+  font-size: 13px;
+  font-weight: 600;
+  color: white;
+  
+  cursor: pointer;
+  
+  transition: all 0.15s ease;
+}
+
+.tool-modal__retry-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, #3D5C4C 0%, #2A3D33 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(93, 133, 112, 0.3);
+}
+
+.tool-modal__retry-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.tool-modal__retry-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.tool-modal__spinner--small {
+  width: 14px;
+  height: 14px;
+  border-width: 2px;
+}
+
+.tool-modal__remove-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  
+  width: 32px;
+  height: 32px;
+  
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  
+  color: #9ca3af;
+  cursor: pointer;
+  
+  transition: all 0.15s ease;
+}
+
+.tool-modal__remove-btn:hover {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.tool-modal__remove-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Responsive */
+@media (max-width: 640px) {
+  .tool-modal {
+    width: 95%;
+    max-height: 90vh;
+  }
+  
+  .tool-modal__header {
+    padding: 16px 20px;
+  }
+  
+  .tool-modal__content {
+    padding: 20px;
+  }
+  
+  .tool-modal__title {
+    font-size: 16px;
+  }
+  
+  .tool-modal__server-item {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .tool-modal__server-actions {
+    justify-content: flex-end;
+    margin-top: 8px;
+  }
+  
+  .tool-modal__retry-btn {
+    flex: 1;
+  }
+}

@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import './ToolConnectionModal.css';
+import { getSavedServers, saveServer, removeSavedServer, type SavedMCPServer } from '../services/MCPStorage';
 
 interface MCPServerInfo {
   id: string;
@@ -36,6 +37,15 @@ export const ToolConnectionModal: React.FC<ToolConnectionModalProps> = ({
 }) => {
   const [serverPath, setServerPath] = useState('');
   const [localError, setLocalError] = useState<string | null>(null);
+  const [savedServers, setSavedServers] = useState<SavedMCPServer[]>([]);
+  const [retryingServerId, setRetryingServerId] = useState<string | null>(null);
+
+  // Load saved servers on mount
+  useEffect(() => {
+    if (isOpen) {
+      setSavedServers(getSavedServers());
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -64,11 +74,36 @@ export const ToolConnectionModal: React.FC<ToolConnectionModalProps> = ({
     
     try {
       await onConnect(serverPath.trim());
+      // Save the server path on successful connection
+      saveServer(serverPath.trim());
+      setSavedServers(getSavedServers());
       setServerPath('');
       setLocalError(null);
     } catch (err) {
       // Error is handled by parent
     }
+  };
+
+  const handleRetry = async (server: SavedMCPServer) => {
+    setRetryingServerId(server.id);
+    try {
+      await onConnect(server.scriptPath);
+      // Update saved servers list
+      setSavedServers(getSavedServers());
+    } catch (err) {
+      // Error is handled by parent
+    } finally {
+      setRetryingServerId(null);
+    }
+  };
+
+  const handleRemoveSaved = (serverId: string) => {
+    removeSavedServer(serverId);
+    setSavedServers(getSavedServers());
+  };
+
+  const isServerConnected = (scriptPath: string): boolean => {
+    return connectedServers.some(s => s.scriptPath === scriptPath);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -178,10 +213,10 @@ export const ToolConnectionModal: React.FC<ToolConnectionModalProps> = ({
             ) : (
               <ul className="tool-modal__server-list">
                 {connectedServers.map((server) => (
-                  <li key={server.id} className="tool-modal__server-item">
+                  <li key={server.id} className="tool-modal__server-item tool-modal__server-item--connected">
                     <div className="tool-modal__server-info">
                       <div className="tool-modal__server-header">
-                        <span className="tool-modal__server-status" />
+                        <span className="tool-modal__server-status tool-modal__server-status--connected" />
                         <span className="tool-modal__server-name">{server.name}</span>
                         <span className="tool-modal__tool-count">
                           {server.toolCount} tool{server.toolCount !== 1 ? 's' : ''}
@@ -218,6 +253,86 @@ export const ToolConnectionModal: React.FC<ToolConnectionModalProps> = ({
               </ul>
             )}
           </div>
+
+          {/* Saved Servers List */}
+          {savedServers.length > 0 && (
+            <div className="tool-modal__section">
+              <h3 className="tool-modal__section-title">
+                Saved Servers
+                <span className="tool-modal__count">{savedServers.length}</span>
+              </h3>
+              <p className="tool-modal__hint tool-modal__hint--section">
+                Previously connected servers - click retry to reconnect
+              </p>
+              
+              <ul className="tool-modal__server-list">
+                {savedServers.map((server) => {
+                  const connected = isServerConnected(server.scriptPath);
+                  const isRetrying = retryingServerId === server.id;
+                  
+                  return (
+                    <li key={server.id} className={`tool-modal__server-item tool-modal__server-item--saved ${connected ? 'tool-modal__server-item--already-connected' : ''}`}>
+                      <div className="tool-modal__server-info">
+                        <div className="tool-modal__server-header">
+                          <span className={`tool-modal__server-status ${connected ? 'tool-modal__server-status--connected' : 'tool-modal__server-status--saved'}`} />
+                          <span className="tool-modal__server-name">{server.name}</span>
+                          {connected && (
+                            <span className="tool-modal__connected-badge">Connected</span>
+                          )}
+                        </div>
+                        <p className="tool-modal__server-path">{server.scriptPath}</p>
+                        <div className="tool-modal__server-meta">
+                          <span className="tool-modal__server-meta-item">
+                            Connected {server.connectionCount} time{server.connectionCount !== 1 ? 's' : ''}
+                          </span>
+                          {server.lastConnected && (
+                            <span className="tool-modal__server-meta-item">
+                              Last: {new Date(server.lastConnected).toLocaleDateString()}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="tool-modal__server-actions">
+                        {!connected && (
+                          <button
+                            className="tool-modal__retry-btn"
+                            onClick={() => handleRetry(server)}
+                            disabled={isRetrying}
+                            aria-label={`Retry connection to ${server.name}`}
+                          >
+                            {isRetrying ? (
+                              <>
+                                <span className="tool-modal__spinner tool-modal__spinner--small" />
+                                Connecting...
+                              </>
+                            ) : (
+                              <>
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <polyline points="23 4 23 10 17 10" />
+                                  <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                                </svg>
+                                Retry
+                              </>
+                            )}
+                          </button>
+                        )}
+                        <button
+                          className="tool-modal__remove-btn"
+                          onClick={() => handleRemoveSaved(server.id)}
+                          aria-label={`Remove ${server.name} from saved servers`}
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <polyline points="3 6 5 6 21 6" />
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                          </svg>
+                        </button>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
         </div>
 
         <div className="tool-modal__footer">
